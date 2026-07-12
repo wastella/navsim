@@ -1,0 +1,14 @@
+# @package _global_
+# Default training platform: single/multi CUDA GPU. Matches this repo's original
+# upstream defaults, kept as its own group option (rather than only inline in
+# default_training.yaml) so it stays symmetric with platform/mps.yaml and a future
+# platform can be added without touching either.
+trainer:
+  params:
+    accelerator: gpu
+    strategy: ddp
+    precision: 16-mixed
+
+dataloader:
+  params:
+    pin_memory: true

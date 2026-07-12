@@ -1,0 +1,29 @@
+# @package _global_
+# macOS / Apple Silicon training platform. See docs/install.md's "macOS / Apple
+# Silicon" section for the reasoning behind each override:
+#   - strategy=ddp needs multiple CUDA devices; auto resolves to a single-device
+#     strategy, correct for one MPS GPU.
+#   - precision=16-mixed silently disables loss scaling on MPS (no CUDA AMP),
+#     risking NaNs; 32-true is the safe choice (bf16-mixed isn't supported by the
+#     MPS backend on this repo's pinned torch==2.0.1).
+#   - pin_memory is a CUDA-only optimization; a no-op elsewhere.
+#   - batch_size is lowered from the CUDA default (64): Apple Silicon uses unified
+#     memory shared with the OS, not a discrete GPU with its own VRAM, so a
+#     CUDA-sized batch risks swapping/system-wide slowdown instead of a clean OOM.
+#     Tune based on your Mac's RAM; this is a conservative starting point.
+#   - num_workers is lowered from the CUDA default (4): macOS's multiprocessing
+#     default start method is "spawn", not "fork", so every DataLoader worker
+#     re-imports navsim's full dependency chain (nuplan-devkit, geopandas, etc.)
+#     from scratch on startup instead of inheriting it. Fewer, longer-lived
+#     workers amortize that cost better than many short-lived ones.
+trainer:
+  params:
+    accelerator: mps
+    strategy: auto
+    precision: 32-true
+
+dataloader:
+  params:
+    pin_memory: false
+    batch_size: 16
+    num_workers: 2
