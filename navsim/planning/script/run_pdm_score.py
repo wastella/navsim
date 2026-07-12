@@ -400,9 +400,20 @@ def main(cfg: DictConfig) -> None:
         timestamp = datetime.now().strftime("%Y.%m.%d.%H.%M.%S")
         csv_path = save_path / f"{timestamp}.csv"
         pdm_score_df.drop(columns=["ego_simulated_states"], errors="ignore").to_csv(csv_path)
-        logger.info(f"Raw per-scene scores saved to: {csv_path}")
+        logger.info(
+            f"""
+            Raw per-scene scores saved to: {csv_path}.
+                Number of successful scenarios: {num_sucessful_scenarios}.
+                Number of failed scenarios: {num_failed_scenarios}.
+                Failed tokens: {failed_tokens}.
+            """
+        )
 
         try:
+            if "frame_type" not in pdm_score_df.columns:
+                raise KeyError(
+                    "'frame_type' column missing: every scenario failed before frame type could be recorded"
+                )
             stage_two_mask = pdm_score_df["frame_type"] == SceneFrameType.SYNTHETIC
             stage_two_valid = pdm_score_df[stage_two_mask & pdm_score_df["valid"]]
             numeric_score_cols = [
@@ -414,16 +425,14 @@ def main(cfg: DictConfig) -> None:
             logger.info(
                 f"""
                 Finished running evaluation (pseudo closed-loop combined score unavailable: {num_sucessful_scenarios} / {len(pdm_score_df)} scenarios valid, stage-one requires full original sensor data).
-                    Number of successful scenarios: {num_sucessful_scenarios}.
-                    Number of failed scenarios: {num_failed_scenarios}.
-                    Stage-two (synthetic) valid scenarios: {len(stage_two_valid)} / {stage_two_mask.sum()}.
+                    Stage-two (synthetic) valid scenarios: {len(stage_two_valid)} / {stage_two_mask.sum()} (denominator excludes stage-two scenarios that errored before scoring).
                     Mean stage-two raw component scores:
                     {stage_two_valid[numeric_score_cols].mean() if len(stage_two_valid) else 'n/a'}
                     Results are stored in: {csv_path}.
                 """
             )
         except Exception:
-            logger.warning(f"----------- Failed to compute summary stats (raw CSV at {csv_path} is still valid):")
+            logger.warning(f"----------- Failed to compute stage-two summary stats (raw CSV at {csv_path} is still valid):")
             traceback.print_exc()
         return
 
