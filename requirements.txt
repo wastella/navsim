@@ -10,12 +10,12 @@ casadi  # Used for optimization solving
 control==0.9.1  # Used for LQR controller synthesis
 Fiona  # Used in GpkgMapsDB.py
 geopandas>=0.12.1  # Used to read maps
-guppy3==3.1.2
+guppy3==3.1.2; sys_platform != "darwin"  # heap profiler; unreliable build on macOS
 hydra-core==1.2.0  # Used for configs
 joblib
 matplotlib  # Used for rendering
 nest_asyncio  # Used to nest event loops when running nuBoard/jupyter
-numpy==1.23.4
+numpy==1.23.5
 opencv-python==4.9.0.80  # Used widely
 pandas    # Used widely
 Pillow    # Used widely to render images
