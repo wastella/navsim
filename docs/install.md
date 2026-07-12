@@ -143,6 +143,18 @@ training don't share code, so fixing/configuring one doesn't affect the other:
   results — unset the env var yourself before running if you'd rather see a hard
   error than a silent CPU fallback while debugging). On a Mac with no Apple GPU
   (older Intel Macs), this path **does** fall back to CPU silently — slow, but it works.
+
+  **For existing CUDA users:** this is the one intentional behavior change from
+  upstream even without opting into anything macOS-specific. Upstream's
+  `compute_trajectory` always ran on CPU, regardless of hardware — this fork now runs
+  it on GPU when CUDA is available (a fix for a bug introduced earlier in this same
+  fork, not an upstream limitation worth preserving). Checkpoint *values* are
+  identical either way (`load_state_dict` copies values in-place; device placement at
+  load time was never meaningful in either version). The only observable difference
+  is speed, plus the ordinary floating-point non-determinism between CPU and GPU
+  kernels. If you need bit-exact reproduction of a specific upstream CPU-computed
+  result, set `NAVSIM_DEVICE=cpu` to reproduce upstream's original execution path
+  exactly.
 - **Training**: the default training config (`trainer.params.accelerator: gpu`,
   `strategy: ddp`, `precision: 16-mixed`) is CUDA-only and **does not auto-detect** —
   running it on a Mac fails outright (`ddp` needs multiple CUDA devices). Append
