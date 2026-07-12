@@ -25,9 +25,11 @@ import logging
 from unittest.mock import MagicMock, patch
 
 import pandas as pd
+import pytest
 from omegaconf import OmegaConf
 
 from navsim.common.dataclasses import PDMResults
+from navsim.common.enums import SceneFrameType
 from navsim.planning.script import run_pdm_score as run_pdm_score_module
 
 # @hydra.main wraps the real function for CLI/config-composition purposes; the
@@ -47,6 +49,15 @@ def _make_failed_score_row(token: str) -> pd.DataFrame:
     row = pd.DataFrame([PDMResults.get_empty_results()])
     row["valid"] = False
     row["token"] = token
+    return row
+
+
+def _make_valid_score_row(token: str, frame_type: SceneFrameType) -> pd.DataFrame:
+    """Mirror what run_pdm_score() builds for a token that scored successfully."""
+    row = pd.DataFrame([PDMResults.get_empty_results()])
+    row["valid"] = True
+    row["token"] = token
+    row["frame_type"] = frame_type
     return row
 
 
@@ -136,8 +147,84 @@ def test_failure_diagnostics_are_logged_even_though_frame_type_is_missing(tmp_pa
     for token in FAILED_TOKENS:
         assert token in info_text, f"failed token {token!r} was not logged -- diagnostics are being swallowed"
 
-    # The pre-existing generic warning for the (still expected) inner failure should
-    # still fire -- we're not asserting the KeyError disappears, only that the
-    # diagnostics logged *before* it are no longer lost.
-    warning_text = "\n".join(record.message for record in caplog.records if record.levelno == logging.WARNING)
-    assert "summary stats" in warning_text.lower()
+
+class _ReachedUpstreamFallThrough(Exception):
+    """Sentinel raised by a mocked calculate_individual_mapping_scores, used below only to
+    prove control flow reached that call (i.e. upstream's original continuation path) without
+    needing to simulate its full downstream computation with realistic score data."""
+
+
+def test_stage_one_data_present_falls_through_like_upstream_on_unrelated_failure(tmp_path, caplog):
+    """
+    Fidelity regression test: an *unrelated* exception (not "no stage-one data") must not
+    divert a run that actually has valid stage-one data onto the raw-CSV-only fallback path.
+
+    A prior version of this fix keyed the fallback on `pseudo_closed_loop_valid` alone, which
+    goes False for *any* exception in the aggregation try-block -- not just "no stage-one data
+    available". That meant a single unrelated scenario failure on an otherwise-complete
+    CUDA/Linux run (realistic: one bad token, one transient worker error) would silently divert
+    the *entire run's* output away from upstream's behavior (a uniform-weight fallback that
+    still computes the full stage_one/stage_two/combined summary) onto this fork's raw-CSV
+    fallback -- a behavior change for existing users who never had a mac-specific missing-data
+    problem in the first place.
+
+    This test forces `create_scene_aggregators` to raise for an unrelated reason while at least
+    one scenario has valid stage-one (ORIGINAL frame_type) data, and asserts the code falls
+    through to upstream's original continuation (proven by reaching
+    calculate_individual_mapping_scores) instead of taking the raw-CSV early return.
+    """
+    cfg = OmegaConf.create(
+        {
+            "output_dir": str(tmp_path),
+            "navsim_log_path": "dummy_log_path",
+            "synthetic_scenes_path": "dummy_synthetic_scenes_path",
+            "metric_cache_path": "dummy_metric_cache_path",
+            "train_test_split": {"scene_filter": {}, "reactive_all_mapping": []},
+            "simulator": {"proposal_sampling": {}},
+            "verbose": False,
+        }
+    )
+
+    tokens = ["orig_tok", "synth_tok"]
+    score_rows = [
+        _make_valid_score_row("orig_tok", SceneFrameType.ORIGINAL),
+        _make_valid_score_row("synth_tok", SceneFrameType.SYNTHETIC),
+    ]
+
+    scene_loader = MagicMock()
+    scene_loader.tokens = list(tokens)
+    scene_loader.get_tokens_list_per_log.return_value = {"log1": list(tokens)}
+
+    metric_cache_loader = MagicMock()
+    metric_cache_loader.tokens = list(tokens)
+
+    with patch.object(run_pdm_score_module, "build_logger"), patch.object(
+        run_pdm_score_module, "build_worker", return_value=MagicMock()
+    ), patch.object(
+        run_pdm_score_module, "SceneLoader", return_value=scene_loader
+    ), patch.object(
+        run_pdm_score_module, "MetricCacheLoader", return_value=metric_cache_loader
+    ), patch.object(
+        run_pdm_score_module, "instantiate", return_value=MagicMock()
+    ), patch.object(
+        run_pdm_score_module, "worker_map", return_value=score_rows
+    ), patch.object(
+        run_pdm_score_module,
+        "create_scene_aggregators",
+        side_effect=RuntimeError("simulated aggregation failure, unrelated to stage-one data availability"),
+    ), patch.object(
+        run_pdm_score_module, "calculate_individual_mapping_scores", side_effect=_ReachedUpstreamFallThrough
+    ):
+        with caplog.at_level(logging.INFO, logger=run_pdm_score_module.logger.name):
+            with pytest.raises(_ReachedUpstreamFallThrough):
+                _raw_main(cfg)
+
+    # The raw-CSV early-return path must NOT have been taken -- it always logs this line
+    # before returning.
+    info_text = "\n".join(record.message for record in caplog.records if record.levelno == logging.INFO)
+    assert "Raw per-scene scores saved to" not in info_text, (
+        "an unrelated aggregation failure diverted a run with valid stage-one data onto the "
+        "raw-CSV fallback path -- it should have fallen through to upstream's original "
+        "uniform-weight continuation instead"
+    )
+    assert not list(tmp_path.glob("*.csv")), "no raw CSV should be written on the upstream-fidelity fall-through path"

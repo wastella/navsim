@@ -368,6 +368,18 @@ def main(cfg: DictConfig) -> None:
 
     pdm_score_df = pd.concat(score_rows)
 
+    # Detected up front, independently of whether the pseudo-closed-loop aggregation below
+    # succeeds or raises: pairing stage-two (synthetic) scenes against stage-one (original)
+    # ones is only meaningful if at least one stage-one scene actually scored successfully.
+    # Without this, a single unrelated scenario failure elsewhere (a bad token, a transient
+    # worker error -- unremarkable on a large complete run) would otherwise be
+    # indistinguishable from "no stage-one data at all" if we inferred this from whatever
+    # exception happened to be raised, silently changing output for users with a complete
+    # dataset who hit an ordinary scenario failure. See docs/install.md for background.
+    stage_one_data_available = "frame_type" in pdm_score_df.columns and bool(
+        ((pdm_score_df["frame_type"] == SceneFrameType.ORIGINAL) & pdm_score_df["valid"]).any()
+    )
+
     try:
         raw_mapping = cfg.train_test_split.reactive_all_mapping
         all_mappings: Dict[Tuple[str, str], List[Tuple[str, str]]] = {}
@@ -395,11 +407,17 @@ def main(cfg: DictConfig) -> None:
     else:
         failed_tokens = []
 
-    if not pseudo_closed_loop_valid:
+    if not stage_one_data_available:
         # Pseudo closed-loop aggregation needs valid stage-one (original) scenes to pair against
         # stage-two (synthetic) ones. Without the full original sensor blobs, stage-one scoring
         # can be entirely invalid, which makes the combined-score aggregation below undefined. In
         # that case, skip it and just save the raw per-scene scores we do have.
+        #
+        # Note this is intentionally NOT `if not pseudo_closed_loop_valid` -- that flag also
+        # goes False for ordinary, unrelated failures (see stage_one_data_available above), in
+        # which case we fall through to upstream's original behavior below: a uniform-weight
+        # (weight=1.0) fallback that still computes the full combined summary, rather than
+        # this raw-CSV-only path.
         save_path = Path(cfg.output_dir)
         timestamp = datetime.now().strftime("%Y.%m.%d.%H.%M.%S")
         csv_path = save_path / f"{timestamp}.csv"
