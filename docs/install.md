@@ -103,3 +103,27 @@ conda env create --name navsim -f environment.yml
 conda activate navsim
 pip install -e .
 ```
+
+### macOS / Apple Silicon
+
+This fork adds support for running NAVSIM on Macs with an Apple GPU (M1/M2/M3/M4),
+using PyTorch's Metal Performance Shaders (MPS) backend instead of CPU-only inference.
+
+- **Inference/eval**: no configuration needed. `AbstractAgent.compute_trajectory`
+  automatically moves the model and features to `mps` when
+  `torch.backends.mps.is_available()`, falling back to CPU otherwise.
+- **Training**: `default_training.yaml` still defaults to `accelerator: gpu`,
+  `strategy: ddp`, `precision: 16-mixed`, which are CUDA-only (`ddp` needs multiple
+  CUDA devices, `16-mixed` AMP is unreliable on MPS). Use the `*_macos.sh` variants
+  instead of the standard training scripts, which override these to MPS-compatible
+  settings:
+  ```bash
+  ./scripts/training/run_transfuser_training_macos.sh
+  ./scripts/training/run_ego_mlp_agent_training_macos.sh
+  ```
+- **`guppy3`**: this dependency is skipped on macOS (`sys_platform != "darwin"`
+  marker in `requirements.txt`) — it isn't used anywhere in `navsim/` and has known
+  build issues on macOS.
+
+This is a fork of the upstream [autonomousvision/navsim](https://github.com/autonomousvision/navsim)
+devkit; see that repo for the original CUDA/Linux-focused installation path.
