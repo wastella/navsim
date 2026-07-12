@@ -1,3 +1,7 @@
+# Modified from the upstream autonomousvision/navsim file of the same name (Apache-2.0):
+# adds a fallback path that saves raw per-scene scores instead of crashing when only
+# synthetic stage-two data is available (no full stage-one sensor blobs). Not
+# platform-specific -- applies to any dataset download lacking full stage-one data.
 import logging
 import os
 import traceback

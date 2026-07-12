@@ -125,6 +125,8 @@ The main branch contains the code for NAVSIM v2, used in the 2025 NAVSIM challen
 
 All assets and code in this repository are under the [Apache 2.0 license](./LICENSE) unless specified otherwise. The datasets (including nuPlan and OpenScene) inherit their own distribution licenses. Please consider citing our papers if they help your research.
 
+This is a fork of [autonomousvision/navsim](https://github.com/autonomousvision/navsim) that adds macOS / Apple Silicon support. Per Apache 2.0 §4(b), files modified from upstream carry a notice at the top stating so; see [docs/install.md](docs/install.md#macos--apple-silicon) for a summary of what changed and why.
+
 ```BibTeX
 @inproceedings{Cao2025CORL, 
 	author = {Wei Cao and Marcel Hallgarten and Tianyu Li and Daniel Dauner and Xunjiang Gu and Caojun Wang and Yakov Miron and Marco Aiello and Hongyang Li and Igor Gilitschenski and Boris Ivanovic and Marco Pavone and Andreas Geiger and Kashyap Chitta}, 
