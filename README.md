@@ -58,7 +58,7 @@ The main branch contains the code for NAVSIM v2, used in the 2025 NAVSIM challen
 
 ## Getting started <a name="gettingstarted"></a>
 
-- [Download and installation](docs/install.md)
+- [Download and installation](docs/install.md) (includes [macOS / Apple Silicon setup](docs/install.md#macos--apple-silicon))
 - [Understanding and creating agents](docs/agents.md)
 - [Understanding the data format and classes](docs/cache.md)
 - [Dataset splits vs. filtered training / test splits](docs/splits.md)

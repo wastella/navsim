@@ -7,9 +7,14 @@ To get started with NAVSIM:
 Clone the repository
 
 ```bash
-git clone https://github.com/autonomousvision/navsim.git
+git clone https://github.com/wastella/navsim.git
 cd navsim
 ```
+
+(This is a fork of the upstream [autonomousvision/navsim](https://github.com/autonomousvision/navsim)
+devkit that adds macOS / Apple Silicon support — see the [macOS / Apple Silicon](#macos--apple-silicon)
+section below. If you specifically want the original CUDA/Linux-only devkit, clone
+`autonomousvision/navsim` instead.)
 
 ### 2. Download the dataset
 
@@ -77,6 +82,7 @@ This will download the splits into the download directory. From there, move it t
 
 ```
 Set the required environment variables, by adding the following to your `~/.bashrc` file
+(on macOS, the default shell is zsh — use `~/.zshrc` instead).
 Based on the structure above, the environment variables need to be defined as:
 
 ```bash
@@ -106,24 +112,56 @@ pip install -e .
 
 ### macOS / Apple Silicon
 
-This fork adds support for running NAVSIM on Macs with an Apple GPU (M1/M2/M3/M4),
-using PyTorch's Metal Performance Shaders (MPS) backend instead of CPU-only inference.
+This fork adds support for running NAVSIM on Macs with an Apple GPU, using PyTorch's
+Metal Performance Shaders (MPS) backend instead of CPU-only inference. Requires
+**macOS 12.3+** and an **Apple Silicon (M1 or later) Mac** — Intel Macs without a
+discrete GPU can't use MPS and will silently fall back to CPU (still works, just slow).
 
 - **Inference/eval**: no configuration needed. `AbstractAgent.compute_trajectory`
   automatically moves the model and features to `mps` when
   `torch.backends.mps.is_available()`, falling back to CPU otherwise.
+  `PYTORCH_ENABLE_MPS_FALLBACK=1` is set automatically at import time, so any op
+  without an MPS kernel in this fork's pinned `torch==2.0.1` transparently runs on
+  CPU instead of crashing (this only affects unimplemented ops, never changes
+  results — just unset the env var yourself before running if you'd rather see a
+  hard error than a silent CPU fallback while debugging).
 - **Training**: `default_training.yaml` still defaults to `accelerator: gpu`,
   `strategy: ddp`, `precision: 16-mixed`, which are CUDA-only (`ddp` needs multiple
-  CUDA devices, `16-mixed` AMP is unreliable on MPS). Use the `*_macos.sh` variants
-  instead of the standard training scripts, which override these to MPS-compatible
-  settings:
+  CUDA devices; `16-mixed` AMP silently disables loss scaling on MPS, risking NaNs;
+  `pin_memory` is a CUDA-only optimization and is a no-op elsewhere). Use the
+  `*_macos.sh` variants instead of the standard training scripts, which override
+  these to MPS-compatible settings (`strategy=auto`, `precision=32-true`,
+  `pin_memory=false`):
   ```bash
   ./scripts/training/run_transfuser_training_macos.sh
   ./scripts/training/run_ego_mlp_agent_training_macos.sh
   ```
+  **Note:** training in full `32-true` precision on Mac is not a like-for-like
+  comparison with `16-mixed` CUDA runs — don't directly compare metrics between a
+  Mac-trained checkpoint and the original CUDA/paper baselines without accounting
+  for this. (`bf16-mixed` is not a usable middle ground here: it isn't supported by
+  the MPS backend in `torch==2.0.1`.)
 - **`guppy3`**: this dependency is skipped on macOS (`sys_platform != "darwin"`
   marker in `requirements.txt`) — it isn't used anywhere in `navsim/` and has known
   build issues on macOS.
+
+#### Troubleshooting
+
+- **`NotImplementedError: The operator 'aten::...' is not currently implemented for
+  the MPS device`**: this shouldn't happen given the automatic CPU fallback above —
+  if you see it anyway, confirm `PYTORCH_ENABLE_MPS_FALLBACK` isn't set to `0` in
+  your shell.
+- **`torch.backends.mps.is_available()` returns `False` on an Apple Silicon Mac**:
+  usually means Python is running under Rosetta (x86_64) instead of natively
+  (arm64). Check with `python -c "import platform; print(platform.machine())"` —
+  it should print `arm64`; if it prints `x86_64`, reinstall a native arm64
+  conda/Python.
+- **`pip install -e .` fails trying to build `Fiona`, `rasterio`, or `geopandas`
+  from source** instead of using a prebuilt wheel: install Xcode Command Line Tools
+  (`xcode-select --install`) and retry. This shouldn't normally be needed — modern
+  wheels for these packages bundle their own GDAL/GEOS/PROJ on macOS arm64 — but
+  it's the standard fallback if pip can't find a matching wheel for your exact
+  Python version.
 
 This is a fork of the upstream [autonomousvision/navsim](https://github.com/autonomousvision/navsim)
 devkit; see that repo for the original CUDA/Linux-focused installation path.
