@@ -1,3 +1,4 @@
+import os
 from abc import ABC, abstractmethod
 from typing import Dict, List, Union
 
@@ -7,6 +8,12 @@ from nuplan.planning.simulation.trajectory.trajectory_sampling import Trajectory
 
 from navsim.common.dataclasses import AgentInput, SensorConfig, Trajectory
 from navsim.planning.training.abstract_feature_target_builder import AbstractFeatureBuilder, AbstractTargetBuilder
+
+# MPS lacks kernels for some ops in torch==2.0.1; fall back to CPU for those instead of
+# crashing. Only affects ops with no MPS kernel at all, so it never changes results, only
+# whether unsupported ops run on CPU instead of erroring. Users debugging MPS issues can
+# override by unsetting this before running.
+os.environ.setdefault("PYTORCH_ENABLE_MPS_FALLBACK", "1")
 
 
 class AbstractAgent(torch.nn.Module, ABC):
@@ -20,6 +27,8 @@ class AbstractAgent(torch.nn.Module, ABC):
         super().__init__()
         self.requires_scene = requires_scene
         self._trajectory_sampling = trajectory_sampling
+        self._inference_device = torch.device("mps") if torch.backends.mps.is_available() else torch.device("cpu")
+        self._moved_to_inference_device = False
 
     @abstractmethod
     def name(self) -> str:
@@ -67,8 +76,10 @@ class AbstractAgent(torch.nn.Module, ABC):
         :return: Trajectory representing the predicted ego's position in future
         """
         self.eval()
-        device = torch.device("mps") if torch.backends.mps.is_available() else torch.device("cpu")
-        self.to(device)
+        device = self._inference_device
+        if not self._moved_to_inference_device:
+            self.to(device)
+            self._moved_to_inference_device = True
 
         features: Dict[str, torch.Tensor] = {}
         # build features
