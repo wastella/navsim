@@ -391,6 +391,42 @@ def main(cfg: DictConfig) -> None:
     else:
         failed_tokens = []
 
+    if not pseudo_closed_loop_valid:
+        # Pseudo closed-loop aggregation needs valid stage-one (original) scenes to pair against
+        # stage-two (synthetic) ones. Without the full original sensor blobs, stage-one scoring
+        # can be entirely invalid, which makes the combined-score aggregation below undefined. In
+        # that case, skip it and just save the raw per-scene scores we do have.
+        save_path = Path(cfg.output_dir)
+        timestamp = datetime.now().strftime("%Y.%m.%d.%H.%M.%S")
+        csv_path = save_path / f"{timestamp}.csv"
+        pdm_score_df.drop(columns=["ego_simulated_states"], errors="ignore").to_csv(csv_path)
+        logger.info(f"Raw per-scene scores saved to: {csv_path}")
+
+        try:
+            stage_two_mask = pdm_score_df["frame_type"] == SceneFrameType.SYNTHETIC
+            stage_two_valid = pdm_score_df[stage_two_mask & pdm_score_df["valid"]]
+            numeric_score_cols = [
+                c
+                for c in pdm_score_df.columns
+                if any(score.name in c for score in fields(PDMResults))
+                and pd.api.types.is_numeric_dtype(stage_two_valid[c])
+            ]
+            logger.info(
+                f"""
+                Finished running evaluation (pseudo closed-loop combined score unavailable: {num_sucessful_scenarios} / {len(pdm_score_df)} scenarios valid, stage-one requires full original sensor data).
+                    Number of successful scenarios: {num_sucessful_scenarios}.
+                    Number of failed scenarios: {num_failed_scenarios}.
+                    Stage-two (synthetic) valid scenarios: {len(stage_two_valid)} / {stage_two_mask.sum()}.
+                    Mean stage-two raw component scores:
+                    {stage_two_valid[numeric_score_cols].mean() if len(stage_two_valid) else 'n/a'}
+                    Results are stored in: {csv_path}.
+                """
+            )
+        except Exception:
+            logger.warning(f"----------- Failed to compute summary stats (raw CSV at {csv_path} is still valid):")
+            traceback.print_exc()
+        return
+
     score_cols = [
         c
         for c in pdm_score_df.columns
