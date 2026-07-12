@@ -1,0 +1,99 @@
+name: macOS sanity check
+
+on:
+  push:
+    branches:
+      - main
+      - macos-metal-support
+  pull_request:
+    branches:
+      - main
+      - macos-metal-support
+
+jobs:
+  macos-sanity:
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.9
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.9"
+
+      - name: Install core dependencies (torch, pytorch-lightning, navsim)
+        run: |
+          python -m pip install --upgrade pip
+          pip install torch==2.0.1 torchvision==0.15.2 pytorch-lightning==2.2.1
+          pip install -e . --no-deps
+
+      - name: Import sanity check
+        run: |
+          python - <<'EOF'
+          import torch
+          import pytorch_lightning
+
+          # This mirrors the CPU-fallback branch every non-Mac user already
+          # exercises. On a GitHub-hosted macOS runner there is no real GPU
+          # passthrough, so torch.backends.mps.is_available() is expected to
+          # be False here -- we only assert that the check itself doesn't
+          # raise, not that MPS is actually available.
+          mps_available = torch.backends.mps.is_available()
+          device = torch.device("mps") if mps_available else torch.device("cpu")
+          print(f"torch={torch.__version__} pytorch_lightning={pytorch_lightning.__version__} "
+                f"mps_available={mps_available} device={device}")
+
+          # Only the top-level packages are imported here (not e.g.
+          # navsim.agents.abstract_agent), since the concrete agent/common
+          # submodules transitively require nuplan-devkit and its heavy
+          # geopandas/Fiona/rasterio stack, which this workflow deliberately
+          # does not install (see the install step above). The top-level
+          # __init__.py files are lightweight, so this still catches basic
+          # packaging/import breakage.
+          import navsim
+          import navsim.agents
+          import navsim.common
+          import navsim.planning
+
+          print("navsim top-level package imports OK")
+          EOF
+
+      - name: Static regression guard on MPS routing in abstract_agent.py
+        run: |
+          python - <<'EOF'
+          import re
+
+          path = "navsim/agents/abstract_agent.py"
+          with open(path) as f:
+            source = f.read()
+
+          # Guard against re-introducing a CUDA-only assumption: the file
+          # must still branch on MPS availability rather than hardcoding a
+          # CUDA (or otherwise non-portable) device.
+          assert "torch.backends.mps" in source, (
+            f"{path} no longer references torch.backends.mps -- "
+            "macOS/Apple Silicon inference routing may have been reverted."
+          )
+          assert not re.search(r'torch\.device\(\s*["\']cuda', source), (
+            f"{path} appears to hardcode a CUDA device, which would break "
+            "on machines without an NVIDIA GPU (e.g. Apple Silicon)."
+          )
+
+          print(f"{path} still contains MPS-aware device selection")
+          EOF
+
+      - name: Lint macOS training scripts (bash -n)
+        run: |
+          bash -n scripts/training/run_transfuser_training_macos.sh
+          bash -n scripts/training/run_ego_mlp_agent_training_macos.sh
+
+      - name: Lint macOS training scripts (shellcheck)
+        continue-on-error: true
+        run: |
+          if ! command -v shellcheck >/dev/null 2>&1; then
+            brew install shellcheck
+          fi
+          shellcheck scripts/training/run_transfuser_training_macos.sh
+          shellcheck scripts/training/run_ego_mlp_agent_training_macos.sh
